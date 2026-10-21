@@ -1,0 +1,172 @@
+# All paths are resolved relative to this file.
+study_area:
+  state: AK
+  counties: ["090"] # Fairbanks North Star Borough
+
+paths:
+  taz_file: ../local/taz_files/FAST_TAZ_20260727.zip
+  parcel_file: ../local/household_allocation/Parcels.zip
+  census_cache_dir: ../local/household_allocation/census
+  output_dir: output
+  # Optional CSV columns: GEOID20, TAZID_26, SHARE. Listed blocks completely
+  # replace their automatic allocation, and shares must sum to 1 by block.
+  manual_shares_file: null
+
+# PUMS adjusted household incomes define the regional quartiles. The allocator
+# uses PUMS households within each published ACS B19001 band to split that
+# band's block-group count fractionally across INC1_PROP through INC4_PROP.
+income_quantiles:
+  pums_household_file: ../local/PUMS/psam_h02.csv
+  puma_code: 300
+  income_groups: [INC1, INC2, INC3, INC4]
+  # These indices only need to be on the same scale. They are equal because the
+  # configured ACS table and adjusted PUMS incomes use the same dollar year.
+  acs_income_cpi_u: 130.746
+  pums_income_cpi_u: 130.746
+  # Shared with destination-choice and HTS processing.
+  cache_dir: ../local/income_quantile_cache
+  refresh_cache: false
+
+taz:
+  id_column: TAZID_26
+  county_column: COUNTYFP20
+  tract_column: TRACTCE20
+
+block_geography:
+  geoid_column: GEOID20
+  county_column: COUNTYFP20
+  # Downloaded only when path does not exist, then retained in the local cache.
+  path: ../local/household_allocation/census/tl_2020_02090_tabblock20.zip
+  download_url: https://www2.census.gov/geo/tiger/TIGER2020PL/LAYER/TABBLOCK/2020/tl_2020_02090_tabblock20.zip
+
+census:
+  refresh_cache: false
+  env_file: ../local/.env
+  decennial:
+    year: 2020
+    dataset: dec/pl
+    variables:
+      population: P1_001N
+      households: H1_002N # occupied housing units
+  acs:
+    year: 2023
+    dataset: acs/acs5
+    tract_controls:
+      population: B01003_001E
+      households: B11016_001E
+    block_group_distributions:
+      household_size:
+        denominator: B11016_001E
+        categories:
+          SIZE1_PROP: [B11016_010E]
+          SIZE2_PROP: [B11016_003E, B11016_011E]
+          SIZE3_PROP: [B11016_004E, B11016_012E]
+          SIZE4_PROP: [B11016_005E, B11016_006E, B11016_007E, B11016_008E, B11016_013E, B11016_014E, B11016_015E, B11016_016E]
+      income:
+        denominator: B19001_001E
+        published_income_bands: B19001
+      workers:
+        # B08202 is returned as null at block-group geography, so use its
+        # finest published geography (tract) for this dimension.
+        geography: tract
+        denominator: B08202_001E
+        categories:
+          WORKER0_PROP: [B08202_002E]
+          WORKER1_PROP: [B08202_003E]
+          WORKER2_PROP: [B08202_004E]
+          WORKER3_PROP: [B08202_005E]
+      children:
+        denominator: B11005_001E
+        categories:
+          HASCHILDREN_PROP: [B11005_002E]
+        remainder: NOCHILDREN_PROP
+
+allocation:
+  # Tiered allocation keeps blocks wholly within one TAZ intact, weights split
+  # blocks by residential parcel counts, and falls back to land area when a
+  # split block contains no qualifying residential parcels.
+  method: tiered # centroid, area, or tiered
+  parcel_residential_column: Assessing1
+  residential_parcel_values:
+    - LIHTC Rent Restricted
+    - Mobile Home
+    - Multi-Family
+    - Resi-Condo
+    - Residential
+  conflict_area_tolerance: 0.000001
+  material_conflict_min_area_share: 0.01
+  # Zero-household TAZs whose source geography has no published distribution
+  # inherit each missing dimension from the nearest TAZ with valid shares.
+  fill_missing_distributions_from_nearest_taz: true
+  # Reviewed final household totals. Differences are redistributed among other
+  # TAZs in the same Census tract so tract household controls remain unchanged.
+  taz_household_overrides:
+    "1003":
+      value: 0
+    "1016":
+      value: 0
+    "1020":
+      value: 0
+    "1029":
+      value: 0
+    "1037":
+      value: 0
+    "1049":
+      value: 0
+    "1057":
+      value: 0
+    "1061":
+      value: 2
+      comment: inconsistent  census block-level results
+    "3091":
+      value: 0
+      comment: University
+    "3093":
+      value: 0
+      comment: University
+    "3094":
+      value: 0
+    "3095":
+      value: 0
+    "5010":
+      value: 0
+    "5064":
+      value: 0
+    "5079":
+      value: 0
+    "5096":
+      value: 1
+      comment: Raw 2020 allocation of 0.9
+    "5114":
+      value: 0
+    "6004":
+      value: 0
+    "6006":
+      value: 0
+    "6013":
+      value: 0
+    "6017":
+      value: 0
+    "6018":
+      value: 0
+    "6020":
+      value: 0
+    "6021":
+      value: 0
+    "6027":
+      value: 0
+
+outputs:
+  # Input processing retains TAZID_26; output tables rename it and place it first.
+  zone_id_column: TAZID
+  taz_geopackage: taz_household_allocation.gpkg
+  taz_layer: taz_household_allocation
+  taz_csv: taz_household_allocation.csv
+  block_allocation_csv: block_allocation.csv
+  conflict_audit_csv: block_conflicts.csv
+  tract_audit_csv: tract_scaling_audit.csv
+  block_group_weights_csv: block_group_weights.csv
+  manual_household_overrides_csv: manual_household_overrides.csv
+  pums_income_quantiles_csv: pums_income_quantiles.csv
+  income_band_allocation_csv: acs_income_fractional_allocation.csv
+  run_summary_json: run_summary.json
